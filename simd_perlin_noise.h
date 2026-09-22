@@ -16,12 +16,12 @@ anywhere, but somewhere (and only once) you MUST define SIMD_PERLIN_NOISE_IMPLEM
 before the #include for this file, which will create the function implementations.
 Typical usage is as follows:
 
-PerlinNoiseParams params = PerlinGetDefaultParams();
+PerlinSimplexFractalParams params = PerlinSimplexGetDefaultParams();
 float x = 0.1f;
 float y = 0.2f;
-float noiseValue = PerlinFractal(x, y, params);
+float noiseValue = PerlinSimplexFractal(x, y, params);
 
-You can also just get a direct 2D sample in without using the fractal/fractional function by
+You can also just get a direct 2D sample without using the fractal/fractional function by
 calling the noise function directly. The noise function signature is below:
 
 __m128 PerlinSimplexNoise(__m128 x_128, __m128 y_128, int32_t seed);
@@ -64,18 +64,18 @@ typedef struct {
     
     /**
     This number is multiplied by the frequency per pass to determine the frequency of the next pass.
-    2.0 is default, meaning that the frequency doubles on each successive pass.
+    2.0 is default, meaning that the frequency doubles on each successive pass. (lacunarity)
     */
     float freqChangeFactor;
     
     /**
     This number is multiplied by the amplitude per pass to determine the amplitude of the next pass.
-    0.5 is the default, meaning the amplitude range is halved on each successive pass.
+    0.5 is the default, meaning the amplitude range is halved on each successive pass. (persistence)
     */
     float ampChangeFactor;
     
     /**
-    The amount of passes per noise sample.
+    The amount of passes per noise sample (octaves).
     */
     int32_t passCount;
     
@@ -85,12 +85,12 @@ typedef struct {
     On each successive pass, the seed is incremented by one to further add some randomness.
     */
     int32_t seed;
-} PerlinNoiseParams;
+} PerlinSimplexFractalParams;
 
 /**
 Returns a default set of parameters
 */
-PerlinNoiseParams PerlinGetDefaultParams();
+PerlinSimplexFractalParams PerlinSimplexGetDefaultParams();
 
 /**
 A SIMD version of a hash found here:
@@ -118,12 +118,12 @@ From original:
 Takes a 2D coordinate and parameters and returns a summed noise value from that point.
 See the PerlinNoiseParams struct for more info on the parameters.
 */
-float PerlinFractal(float x, float y, PerlinNoiseParams params);
+float PerlinSimplexFractal(float x, float y, PerlinSimplexFractalParams params);
 
 #ifdef SIMD_PERLIN_NOISE_IMPLEMENTATION
 //Implementation below
 
-const PerlinNoiseParams DEFAULT_PERLIN_PARAMS = {
+const PerlinSimplexFractalParams DEFAULT_SIMPLEX_PARAMS = {
     1.0f,
     1.0f,
     2.0f,
@@ -132,8 +132,8 @@ const PerlinNoiseParams DEFAULT_PERLIN_PARAMS = {
     0
 };
 
-PerlinNoiseParams PerlinGetDefaultParams() {
-    return DEFAULT_PERLIN_PARAMS;
+PerlinSimplexFractalParams PerlinSimplexGetDefaultParams() {
+    return DEFAULT_SIMPLEX_PARAMS;
 }
 
 __m128i PerlinHash(__m128i i, __m128i seed) {
@@ -284,7 +284,7 @@ __m128 PerlinSimplexNoise(__m128 x_128, __m128 y_128, __m128i seed) {
     return output128;
 }
 
-float PerlinFractal(float x, float y, PerlinNoiseParams params) {
+float PerlinSimplexFractal(float x, float y, PerlinSimplexFractalParams params) {
     float currentFrequency = params.initialFreq;
     float currentAmplitude = params.initialAmplitude;
     float denom = 0.0f;
