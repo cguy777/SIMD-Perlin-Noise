@@ -47,6 +47,7 @@ added a seed parameter to help add some randomness if desired.
 #pragma once
 
 #include <stdint.h>
+#include <intrin.h>
 
 typedef struct {
     /**
