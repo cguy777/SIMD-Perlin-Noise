@@ -41,7 +41,9 @@ However, it seems to work relatively well, especially when the pass count is in 
 of four. I also switched from the 1-byte hash table to a hash function as it was simpler to
 implement in SIMD. The hash behavior seems to be good enough from what I've seen, but you
 may want to reach for a different one or reimplement the hash table version again. I also
-added a seed parameter to help add some randomness if desired.
+added a seed parameter to help add some randomness if desired. The other change made was
+switching back to a table-based vector approach. This is faster and seems work better
+from a noise generation standpoint.
 */
 
 #pragma once
@@ -117,6 +119,7 @@ From original:
 "Fractal/Fractional Brownian Motion (fBm) summation of 2D Perlin Simplex noise"
 Takes a 2D coordinate and parameters and returns a summed noise value from that point.
 See the PerlinNoiseParams struct for more info on the parameters.
+The returned value is normalized between -1 and 1.
 */
 float PerlinSimplexFractal(float x, float y, PerlinSimplexFractalParams params);
 
@@ -148,42 +151,32 @@ __m128i PerlinHash(__m128i i, __m128i seed) {
     return i;
 }
 
-__m128 PerlinGrad(__m128i hash_128, __m128 x_128, __m128 y_128) {
-    //This mask is used a couple of times
-    __m128i full_mask_128i = _mm_set1_epi32(0xFFFFFFFF);
+const float PerlinSimplexGradTable[8][2] = {
+    {1, 0}, {-1, 0}, {0, 1},   {0, -1},
+    {0, 1}, {-1, 1}, {-1, -1}, {1, -1}
+};
 
-    __m128i h_128i = _mm_and_si128(hash_128, _mm_set1_epi32(0x3F)); // Convert low 3 bits of hash code
+__m128 PerlinGrad(__m128i hash_128, __m128 x_128, __m128 y_128) {
+    __m128i h_128i = _mm_and_si128(hash_128, _mm_set1_epi32(0b111)); // Convert low 3 bits of hash code
     
-    __m128 h_lt_4_mask_128 = _mm_castsi128_ps(_mm_cmplt_epi32(h_128i, _mm_set1_epi32(4))); // into 8 simple gradient directions,
-    __m128 h_nlt_4_mask_128 = _mm_andnot_ps(h_lt_4_mask_128, _mm_castsi128_ps(full_mask_128i));
-    
-    __m128 u_128 = _mm_add_ps(_mm_and_ps(x_128, h_lt_4_mask_128), _mm_and_ps(y_128, h_nlt_4_mask_128)); //...
-    __m128 v_128 = _mm_add_ps(_mm_and_ps(y_128, h_lt_4_mask_128), _mm_and_ps(x_128, h_nlt_4_mask_128)); //...
-    
-    __m128i one_128i = _mm_set1_epi32(1);
-    __m128i h_and_1_128i = _mm_and_si128(h_128i, one_128i); // and compute the dot product with (x,y)
-    __m128i h_is_odd_mask_128i = _mm_cmpeq_epi32(h_and_1_128i, one_128i);
-    __m128i h_is_even_mask_128i = _mm_andnot_si128(h_is_odd_mask_128i, full_mask_128i);
-            
-    __m128 u_neg_128 = _mm_mul_ps(u_128, _mm_set1_ps(-1.0f)); //...
-    __m128 u_selected_128 = _mm_add_ps(_mm_and_ps(u_128, _mm_castsi128_ps(h_is_even_mask_128i)),
-                                       _mm_and_ps(u_neg_128, _mm_castsi128_ps(h_is_odd_mask_128i)));
+    //Driving this from a table of 2D vectors seems to give better noise generation
+    //than the heavy branching version in the original
+    //TODO: is there a more SIMD way to assign the vectors here?
+    __m128 grad_table_x_128 = _mm_set_ps(PerlinSimplexGradTable[((uint32_t*) &h_128i)[3]][0],
+                                         PerlinSimplexGradTable[((uint32_t*) &h_128i)[2]][0],
+                                         PerlinSimplexGradTable[((uint32_t*) &h_128i)[1]][0],
+                                         PerlinSimplexGradTable[((uint32_t*) &h_128i)[0]][0]);
                                         
+    __m128 grad_table_y_128 = _mm_set_ps(PerlinSimplexGradTable[((uint32_t*) &h_128i)[3]][1],
+                                         PerlinSimplexGradTable[((uint32_t*) &h_128i)[2]][1],
+                                         PerlinSimplexGradTable[((uint32_t*) &h_128i)[1]][1],
+                                         PerlinSimplexGradTable[((uint32_t*) &h_128i)[0]][1]);
     
-    __m128i two_128i = _mm_set1_epi32(2); // ...
-    __m128i h_and_2_128i = _mm_and_si128(h_128i, two_128i);
-    __m128i h_and_2_mask_128i = _mm_cmpeq_epi32(h_and_2_128i, two_128i);
-    __m128i h_and_not_2_mask_128i = _mm_andnot_si128(h_and_2_mask_128i, full_mask_128i);
+    __m128 x_mul_128 = _mm_mul_ps(x_128, grad_table_x_128);
+    __m128 y_mul_128 = _mm_mul_ps(y_128, grad_table_y_128);
     
-    __m128 v_times_2_128 = _mm_mul_ps(v_128, _mm_set1_ps(2.0f)); // ...
-    __m128 v_times_neg_2_128 = _mm_mul_ps(v_128, _mm_set1_ps(-2.0f));
-    
-    __m128 v_selected_128 = _mm_add_ps(_mm_and_ps(v_times_neg_2_128, _mm_castsi128_ps(h_and_2_mask_128i)),
-                                       _mm_and_ps(v_times_2_128, _mm_castsi128_ps(h_and_not_2_mask_128i)));
-    
-    //Add the two selected values together
-    __m128 output_128 = _mm_add_ps(u_selected_128, v_selected_128); 
-    return output_128;
+    __m128 component_wise_sum_128 = _mm_add_ps(x_mul_128, y_mul_128);
+    return component_wise_sum_128;
 }
 
 //2D perlin simplex noise in simd
@@ -245,7 +238,7 @@ __m128 PerlinSimplexNoise(__m128 x_128, __m128 y_128, __m128i seed) {
     
     //We use these values a few times, so we'll just create them here
     __m128 half_128 = _mm_set1_ps(0.5f);
-    __m128 zero_128 = _mm_set1_ps(0.0f);
+    __m128 zero_128 = _mm_setzero_ps();
     
     // Calculate the contribution from the first corner
     __m128 x0_squared_128 = _mm_mul_ps(x0_128, x0_128);
@@ -280,9 +273,26 @@ __m128 PerlinSimplexNoise(__m128 x_128, __m128 y_128, __m128i seed) {
     // Add contributions from each corner to get the final noise value.
     // The result is scaled to return values in the interval [-1,1].
     __m128 output128 = _mm_add_ps(n0_128, _mm_add_ps(n1_128, n2_128));
-    output128 = _mm_mul_ps(output128, _mm_set1_ps(45.23065f));
+    output128 = _mm_mul_ps(output128, _mm_set1_ps(70.0f));
     return output128;
 }
+
+//Precompute some output masks and then grab them from a table
+const __m128 perlin_output_mask_0_128 = _mm_setzero_ps();
+const __m128 perlin_output_mask_1_128 = _mm_castsi128_ps(_mm_set_epi32(0,          0,          0,          0xFFFFFFFF));
+const __m128 perlin_output_mask_2_128 = _mm_castsi128_ps(_mm_set_epi32(0,          0,          0xFFFFFFFF, 0xFFFFFFFF));
+const __m128 perlin_output_mask_3_128 = _mm_castsi128_ps(_mm_set_epi32(0,          0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF));
+const __m128 perlin_output_mask_4_128 = _mm_castsi128_ps(_mm_set_epi32(0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF));
+const __m128 perlin_output_masks[] = {
+    perlin_output_mask_0_128,
+    perlin_output_mask_1_128,
+    perlin_output_mask_2_128,
+    perlin_output_mask_3_128,
+    perlin_output_mask_4_128
+};
+
+const __m128i perlin_four_pass_seed_offset_128i = _mm_set_epi32(3, 2, 1, 0);
+const __m128i perlin_four_128i = _mm_set1_epi32(4);
 
 float PerlinSimplexFractal(float x, float y, PerlinSimplexFractalParams params) {
     float currentFrequency = params.initialFreq;
@@ -292,25 +302,25 @@ float PerlinSimplexFractal(float x, float y, PerlinSimplexFractalParams params) 
     __m128 x_128 = _mm_set1_ps(x);
     __m128 y_128 = _mm_set1_ps(y);
 
-    __m128 output_128 = _mm_set1_ps(0);
+    __m128 output_128 = _mm_setzero_ps();
+    __m128i passIndex_128i = _mm_setzero_si128();
     
-    __m128i seed_128 = _mm_set1_epi32(params.seed);
+    __m128i seed_128 = _mm_add_epi32(_mm_set1_epi32(params.seed), perlin_four_pass_seed_offset_128i);
 
     for(uint32_t passIndex = 0; passIndex < params.passCount; passIndex += 4) {
-        __m128 fourPassOutput_128 = _mm_set1_ps(0);
+        __m128 fourPassOutput_128 = _mm_setzero_ps();
     
         __m128 currentFreq_128 = _mm_set1_ps(currentFrequency);
         __m128 currentAmp_128 = _mm_set1_ps(currentAmplitude);
-        __m128 outputMask_128 = _mm_set1_ps(0);
+        
+        seed_128 = _mm_add_epi32(seed_128, passIndex_128i);
         
         uint32_t remainingPasses = params.passCount - passIndex;
         uint32_t iterCount = remainingPasses >= 4 ? 4 : remainingPasses;
         for(uint32_t i = 0; i < iterCount; i++) {
             ((float*) &currentFreq_128)[i] = currentFrequency;
             ((float*) &currentAmp_128)[i] = currentAmplitude;
-            ((uint32_t*) &outputMask_128)[i] = 0xFFFFFFFF;
-            //Increment the seed per pass to give some variance per pass
-            ((int32_t*) &seed_128)[i] += passIndex + i;
+            
             denom += currentAmplitude;
             currentFrequency *= params.freqChangeFactor;
             currentAmplitude *= params.ampChangeFactor;
@@ -319,10 +329,13 @@ float PerlinSimplexFractal(float x, float y, PerlinSimplexFractalParams params) 
         __m128 freqAdjX_128 = _mm_mul_ps(x_128, currentFreq_128);
         __m128 freqAdjY_128 = _mm_mul_ps(y_128, currentFreq_128);
         
-        //Mask the result so we get the desired amount of passes
-        fourPassOutput_128 = _mm_mul_ps(currentAmp_128, PerlinSimplexNoise(freqAdjX_128, freqAdjY_128, _mm_set1_epi32(params.seed + passIndex)));
+        fourPassOutput_128 = _mm_mul_ps(currentAmp_128, PerlinSimplexNoise(freqAdjX_128, freqAdjY_128, seed_128));
         
-        output_128 = _mm_add_ps(output_128, _mm_and_ps(fourPassOutput_128, outputMask_128));
+        //Mask the result so we get the desired amount of passes
+        output_128 = _mm_add_ps(output_128, _mm_and_ps(fourPassOutput_128, perlin_output_masks[iterCount]));
+        
+        //We have to manually increment passIndex_128i
+        passIndex_128i = _mm_add_epi32(passIndex_128i, perlin_four_128i);
     }
     
     //Sum all of the lanes together
