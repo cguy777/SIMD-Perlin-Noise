@@ -25,10 +25,11 @@ float x = 0.1f;
 float y = 0.2f;
 float noiseValue = PerlinSimplexFractal(x, y, params);
 
-You can also just get a direct 2D sample without using the fractal/fractional function by
-calling the noise function directly. The noise function signature is below:
+You can also just get direct 2D samples without using the fractal/fractional function by
+calling the noise functions directly. The SIMD and scalar noise function signatures are below:
 
 __m128 PerlinSimplexNoise(__m128 x_128, __m128 y_128, int32_t seed);
+float PerlinSimplexNoiseScalar(float x, float y, int32_t seed);
 
 Obviously, you can change the parameters as necessary.
 
