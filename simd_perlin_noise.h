@@ -3,13 +3,17 @@ Copyright (c) 2026, Noah McLean.
 This is licensed with the 3-clause BSD license.
 See the license info at the bottom of this file.
 
+********** Basic Info and Attribution **********
+
 This is a simple 2D simplex perlin noise generator implemented in SIMD using SSE 4.1.
 It is based off of an implementation by Sebastien Rombauts (sebastien.rombauts@gmail.com).
 Because this library is essentially a derivation, I feel obligated to point you towards the
 original library, which can be found here: https://github.com/SRombauts/SimplexNoise
 The original is distributed under the MIT license and can be found at the bottom of this file.
+I also referred to the paper "Simplex noise demystified" by Stefan Gustavson, which the original
+library was based from: https://www.researchgate.net/publication/216813608_Simplex_noise_demystified
 
-*** API USAGE ***
+********** API USAGE **********
 
 This is a single file library in the style of the STB libraries. You may include this file
 anywhere, but somewhere (and only once) you MUST define SIMD_PERLIN_NOISE_IMPLEMENTATION 
@@ -28,7 +32,7 @@ __m128 PerlinSimplexNoise(__m128 x_128, __m128 y_128, int32_t seed);
 
 Obviously, you can change the parameters as necessary.
 
-*** More Info ***
+********** More Info **********
 
 The main thing I did was take the 2D version present in the original version and
 reimplement it using SIMD. The SIMD implementation is across multiple passes/octaves.
@@ -113,6 +117,11 @@ Returns a noise value between -1 and 1.
 A value of 0 is returned for all whole-number coordinates.
 */
 __m128 PerlinSimplexNoise(__m128 x_128, __m128 y_128, int32_t seed);
+
+/**
+Convenience function to call the SIMD version of PerlinSimplexNoise in a scalar way.
+*/
+float PerlinSimplexNoiseScalar(float x, float y, int32_t seed);
 
 /**
 From original:
@@ -275,6 +284,16 @@ __m128 PerlinSimplexNoise(__m128 x_128, __m128 y_128, __m128i seed) {
     __m128 output128 = _mm_add_ps(n0_128, _mm_add_ps(n1_128, n2_128));
     output128 = _mm_mul_ps(output128, _mm_set1_ps(70.0f));
     return output128;
+}
+
+//Convenience function to call the SIMD version of PerlinSimplexNoise in a scalar way.
+float PerlinSimplexNoiseScalar(float x, float y, int32_t seed) {
+    __m128 x_128 = _mm_set1_ps(x);
+    __m128 y_128 = _mm_set1_ps(y);
+    __m128i seed_128 = _mm_set1_epi32(seed);
+    __m128 noise_128 = PerlinSimplexNoise(x_128, y_128, seed_128);
+    float noise = _mm_cvtss_f32(noise_128);
+    return noise;
 }
 
 //Precompute some output masks and then grab them from a table
